@@ -530,56 +530,39 @@ async def perform_structure_analysis(
 
                 result = output[0]  # Get first result object
 
-                # Get the JSON representation using save_to_json
-                import json
-                import glob
-                json_output_dir = tempfile.mkdtemp()
+                # Get markdown representation (easiest way to get structured content)
+                md_info = result.markdown
+                markdown_text = md_info.get('markdown', '')
 
-                result.save_to_json(save_path=json_output_dir)
+                # Also get layout parsing result for structured data
+                if hasattr(result, 'layout_parsing_result'):
+                    layout_result = result.layout_parsing_result
 
-                # Find the generated JSON file
-                json_files = glob.glob(os.path.join(json_output_dir, '*.json'))
+                    for region in layout_result:
+                        region_type = region.get('layout_label', 'unknown')
+                        bbox = region.get('bbox', [])
 
-                if json_files:
-                    with open(json_files[0], 'r', encoding='utf-8') as f:
-                        result_json = json.load(f)
+                        region_info = {
+                            "type": region_type,
+                            "bbox": bbox
+                        }
 
-                    # Extract regions from the JSON structure
-                    if 'layout_regions' in result_json:
-                        for region in result_json['layout_regions']:
-                            region_type = region.get('type', 'unknown')
-                            bbox = region.get('bbox', [])
+                        # Extract text content
+                        if 'text' in region:
+                            text_content = region['text']
+                            region_info['text'] = text_content
+                            full_document_text.append(text_content)
 
-                            region_info = {
-                                "type": region_type,
-                                "bbox": bbox,
-                                "confidence": region.get('score', 0.0)
-                            }
+                        # Extract table HTML if available
+                        if 'html' in region:
+                            region_info['table_html'] = region['html']
 
-                            # Add OCR text for text regions
-                            if region_type in ['text', 'title', 'figure']:
-                                ocr_text = region.get('text', '')
-                                if ocr_text:
-                                    region_info['text'] = ocr_text
-                                    full_document_text.append(ocr_text)
+                        page_data["regions"].append(region_info)
 
-                            # Add table HTML for table regions
-                            elif region_type == 'table':
-                                table_html = region.get('html', '')
-                                table_text = region.get('text', '')
-
-                                if table_html:
-                                    region_info['table_html'] = table_html
-                                if table_text:
-                                    region_info['text'] = table_text
-                                    full_document_text.append(f"[Table]\n{table_text}")
-
-                            page_data["regions"].append(region_info)
-
-                    # Clean up JSON files
-                    for json_file in json_files:
-                        os.unlink(json_file)
-                    os.rmdir(json_output_dir)
+                # If we got markdown but no regions, just use the markdown text
+                if not page_data["regions"] and markdown_text:
+                    page_data["markdown"] = markdown_text
+                    full_document_text.append(markdown_text)
 
             finally:
                 # Clean up temp image file
