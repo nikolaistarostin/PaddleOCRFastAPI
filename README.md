@@ -261,6 +261,57 @@ curl -X POST "http://localhost:8023/ocr" \
 curl -X POST "http://localhost:8023/ocr?lang=fr" \
   -H "X-API-Key: your-api-key-here" \
   -F "file=@image.jpg"
+
+# Multilingual mode (for documents with mixed languages like Russian + English)
+curl -X POST "http://localhost:8023/ocr?lang=en,ru&multilingual=true" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@document.pdf"
+```
+
+**Multilingual OCR:**
+
+For documents containing multiple languages (e.g., Russian and English text on the same page), use the `multilingual=true` parameter:
+
+```bash
+# Process with specific languages
+POST /ocr?lang=en,ru&multilingual=true
+
+# Process with all configured languages
+POST /ocr?multilingual=true
+```
+
+The multilingual mode:
+- Processes the document with each specified language
+- Merges results by bounding box location
+- Keeps the result with highest confidence for each text region
+- Includes `detected_lang` field showing which language produced the best result
+
+Example response:
+```json
+{
+  "success": true,
+  "filename": "mixed-lang.pdf",
+  "pages": 1,
+  "language": "en,ru",
+  "multilingual": true,
+  "text_blocks": [
+    {
+      "text": "Hello World",
+      "confidence": 0.98,
+      "bounding_box": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
+      "page": 1,
+      "detected_lang": "en"
+    },
+    {
+      "text": "Привет мир",
+      "confidence": 0.96,
+      "bounding_box": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]],
+      "page": 1,
+      "detected_lang": "ru"
+    }
+  ],
+  "full_text": "Hello World\nПривет мир"
+}
 ```
 
 **Check Available Languages:**
