@@ -1,0 +1,312 @@
+# PaddleOCR FastAPI Wrapper
+
+A simple FastAPI wrapper for PaddleOCR with API key authentication.
+
+## Features
+
+- RESTful API for OCR operations
+- API key authentication for secure access
+- Multiple endpoints for different use cases
+- Support for various image formats
+- Detailed OCR results with bounding boxes and confidence scores
+- Text-only endpoint for simplified output
+- Docker and Docker Compose support for easy deployment
+
+## Installation
+
+### Option 1: Docker (Recommended)
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd PaddleOCRFastAPI
+```
+
+2. Create a `.env` file from the example:
+```bash
+cp .env.example .env
+```
+
+3. Edit `.env` and set your API key:
+```
+API_KEY=your-secure-api-key-here
+```
+
+4. Start the service with Docker Compose:
+```bash
+docker-compose up -d
+```
+
+The API will be available at `http://localhost:8023`
+
+To stop the service:
+```bash
+docker-compose down
+```
+
+To view logs:
+```bash
+docker-compose logs -f
+```
+
+### Option 2: Manual Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd PaddleOCRFastAPI
+```
+
+2. Create a virtual environment (recommended):
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Create a `.env` file from the example:
+```bash
+cp .env.example .env
+```
+
+5. Edit `.env` and set your API key:
+```
+API_KEY=your-secure-api-key-here
+```
+
+## Usage
+
+### Starting the Server
+
+Run the server with:
+```bash
+python main.py
+```
+
+Or using uvicorn directly:
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8023 --reload
+```
+
+The API will be available at `http://localhost:8023`
+
+### API Documentation
+
+Once the server is running, visit:
+- Swagger UI: `http://localhost:8023/docs`
+- ReDoc: `http://localhost:8023/redoc`
+
+## API Endpoints
+
+### Health Check
+```bash
+GET /
+GET /health
+```
+No authentication required.
+
+### OCR with Full Details
+```bash
+POST /ocr
+```
+Returns detected text with bounding boxes and confidence scores.
+
+**Headers:**
+- `X-API-Key`: Your API key
+
+**Body:**
+- `file`: Image file (multipart/form-data)
+
+**Response:**
+```json
+{
+  "success": true,
+  "filename": "example.jpg",
+  "text_blocks": [
+    {
+      "text": "Hello World",
+      "confidence": 0.98,
+      "bounding_box": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+    }
+  ],
+  "full_text": "Hello World"
+}
+```
+
+### OCR Text Only
+```bash
+POST /ocr/text-only
+```
+Returns only the extracted text without bounding boxes.
+
+**Headers:**
+- `X-API-Key`: Your API key
+
+**Body:**
+- `file`: Image file (multipart/form-data)
+
+**Response:**
+```json
+{
+  "success": true,
+  "filename": "example.jpg",
+  "text": "Hello World"
+}
+```
+
+## Example Usage
+
+### Using cURL
+
+```bash
+# Full OCR with details
+curl -X POST "http://localhost:8023/ocr" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@/path/to/image.jpg"
+
+# Text only
+curl -X POST "http://localhost:8023/ocr/text-only" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@/path/to/image.jpg"
+```
+
+### Using Python
+
+```python
+import requests
+
+url = "http://localhost:8023/ocr"
+headers = {"X-API-Key": "your-api-key-here"}
+files = {"file": open("image.jpg", "rb")}
+
+response = requests.post(url, headers=headers, files=files)
+print(response.json())
+```
+
+### Using JavaScript (fetch)
+
+```javascript
+const formData = new FormData();
+formData.append('file', fileInput.files[0]);
+
+fetch('http://localhost:8023/ocr', {
+  method: 'POST',
+  headers: {
+    'X-API-Key': 'your-api-key-here'
+  },
+  body: formData
+})
+.then(response => response.json())
+.then(data => console.log(data));
+```
+
+## Configuration
+
+### Environment Variables
+
+- `API_KEY` (required): API key for authentication
+
+### PaddleOCR Settings
+
+PaddleOCR is configured in [main.py](main.py) with the following default settings:
+- Language: English (`lang='en'`)
+- Angle classification: Enabled (`use_angle_cls=True`)
+- GPU: Disabled (`use_gpu=False`)
+
+You can modify these settings in the `get_ocr()` function.
+
+## Security Notes
+
+- Always use a strong, randomly generated API key in production
+- Keep your `.env` file secure and never commit it to version control
+- Consider using HTTPS in production
+- Implement rate limiting for production deployments
+
+## Error Handling
+
+The API returns appropriate HTTP status codes:
+- `200`: Success
+- `400`: Bad request (e.g., invalid file type)
+- `403`: Invalid API key
+- `500`: Server error during OCR processing
+
+## Requirements
+
+- Python 3.8+
+- FastAPI
+- PaddleOCR
+- PaddlePaddle
+- Pillow
+- python-dotenv
+
+See [requirements.txt](requirements.txt) for full dependencies.
+
+### Docker Requirements
+
+- Docker 20.10+
+- Docker Compose 1.29+
+
+## Docker Details
+
+### Dockerfile
+
+The [Dockerfile](Dockerfile) uses Python 3.10-slim as the base image and includes:
+- System dependencies required for PaddleOCR (OpenGL, libgomp, etc.)
+- Automatic model caching in `/root/.paddleocr`
+- Health check endpoint integration
+- Optimized layer caching for faster rebuilds
+
+### Docker Compose
+
+The [docker-compose.yml](docker-compose.yml) file provides:
+- Automatic container restart policy
+- Environment variable injection from `.env` file
+- Named volume for persistent model storage
+- Port mapping (8023:8023)
+- Integrated health checks
+
+### Building and Running
+
+Build the image:
+```bash
+docker-compose build
+```
+
+Run in detached mode:
+```bash
+docker-compose up -d
+```
+
+Run with live logs:
+```bash
+docker-compose up
+```
+
+Rebuild and restart:
+```bash
+docker-compose up -d --build
+```
+
+### Persistent Storage
+
+PaddleOCR models are downloaded on first use and stored in a Docker volume named `paddleocr-models`. This ensures:
+- Models persist between container restarts
+- Faster startup times after initial download
+- Reduced bandwidth usage
+
+To remove the volume (will require re-downloading models):
+```bash
+docker-compose down -v
+```
+
+## License
+
+MIT License
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.

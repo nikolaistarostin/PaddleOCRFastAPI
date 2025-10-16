@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  paddleocr-api:
+    build: .
+    container_name: paddleocr-fastapi
+    ports:
+      - "8023:8023"
+    environment:
+      - API_KEY=${API_KEY}
+    env_file:
+      - .env
+    volumes:
+      # Optional: Mount models directory to persist downloaded models
+      - paddleocr-models:/root/.paddleocr
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8023/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  paddleocr-models:
+    driver: local
