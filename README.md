@@ -106,8 +106,71 @@ Once the server is running, visit:
 ```bash
 GET /
 GET /health
+GET /languages
 ```
 No authentication required.
+
+### Document Structure Analysis (PP-StructureV3)
+```bash
+POST /structure
+```
+**NEW!** Advanced document analysis with layout detection, table recognition, and structured extraction.
+
+Perfect for:
+- PDFs with tables and complex layouts
+- Multi-column documents
+- Forms and invoices
+- Research papers
+
+**Headers:**
+- `X-API-Key`: Your API key
+
+**Body:**
+- `file`: PDF or image file (multipart/form-data)
+
+**Response:**
+```json
+{
+  "success": true,
+  "filename": "document.pdf",
+  "pages": 2,
+  "document_structure": [
+    {
+      "page": 1,
+      "regions": [
+        {
+          "type": "title",
+          "bbox": [x1, y1, x2, y2],
+          "confidence": 0.95,
+          "text": "Document Title"
+        },
+        {
+          "type": "table",
+          "bbox": [x1, y1, x2, y2],
+          "confidence": 0.92,
+          "table_html": "<table>...</table>",
+          "text": "Table content as text"
+        },
+        {
+          "type": "text",
+          "bbox": [x1, y1, x2, y2],
+          "confidence": 0.88,
+          "text": "Paragraph content"
+        }
+      ]
+    }
+  ],
+  "full_text": "Document Title\n\n[Table]\nTable content...\n\nParagraph content"
+}
+```
+
+**Region Types:**
+- `title` - Document/section titles
+- `text` - Paragraph text
+- `figure` - Images and captions
+- `table` - Tables (includes HTML structure)
+- `list` - Lists
+- And more...
 
 ### OCR with Full Details
 ```bash
@@ -163,6 +226,11 @@ Returns only the extracted text without bounding boxes.
 ### Using cURL
 
 ```bash
+# Document structure analysis (recommended for PDFs)
+curl -X POST "http://localhost:8023/structure" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@document.pdf"
+
 # Full OCR with details
 curl -X POST "http://localhost:8023/ocr" \
   -H "X-API-Key: your-api-key-here" \

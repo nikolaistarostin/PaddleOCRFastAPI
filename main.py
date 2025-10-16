@@ -1,9 +1,10 @@
 import os
 import tempfile
-from typing import List
+import re
+from typing import List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader
-from paddleocr import PaddleOCR
+from paddleocr import PaddleOCR, PPStructure
 from PIL import Image
 import io
 from dotenv import load_dotenv
@@ -33,6 +34,29 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 
 # Initialize PaddleOCR instances (one per language)
 ocr_instances = {}
+
+# Initialize PP-StructureV3 instance (lazy loaded)
+structure_instance = None
+
+
+def get_structure():
+    """
+    Lazy initialization of PP-StructureV3 for document analysis
+
+    Returns:
+        PPStructure instance for document layout and table recognition
+    """
+    global structure_instance
+    if structure_instance is None:
+        structure_instance = PPStructure(
+            use_angle_cls=True,
+            lang=LANGUAGES_LIST[0],  # Use first configured language
+            layout=True,  # Enable layout analysis
+            table=True,   # Enable table recognition
+            ocr=True,     # Enable OCR
+            show_log=False
+        )
+    return structure_instance
 
 
 def get_ocr(lang: str = None):
@@ -440,6 +464,111 @@ async def perform_ocr_text_only(
         raise HTTPException(
             status_code=500,
             detail=f"OCR processing failed: {str(e)}"
+        )
+
+
+@app.post("/structure")
+async def perform_structure_analysis(
+    file: UploadFile = File(...),
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Perform document structure analysis using PP-StructureV3
+
+    This endpoint provides advanced document analysis including:
+    - Layout detection (text regions, titles, images, tables, etc.)
+    - Table recognition with cell structure
+    - Formula recognition
+    - Proper reading order for complex layouts
+
+    Args:
+        file: PDF file or image file
+
+    Returns:
+        JSON response with structured document analysis including:
+        - Layout regions with types and bounding boxes
+        - Extracted tables in structured format
+        - OCR text for each region
+        - Full document text in reading order
+    """
+    try:
+        # Read file
+        contents = await file.read()
+
+        # Process file to images
+        images = process_file_to_images(contents, file.filename)
+
+        # Get PP-StructureV3 engine
+        structure_engine = get_structure()
+
+        all_pages_results = []
+        full_document_text = []
+
+        for page_num, image in enumerate(images, start=1):
+            # Convert PIL Image to numpy array for PP-Structure
+            import numpy as np
+            img_array = np.array(image)
+
+            # Perform structure analysis
+            result = structure_engine(img_array)
+
+            page_data = {
+                "page": page_num,
+                "regions": []
+            }
+
+            # Process results
+            for region in result:
+                region_type = region.get('type', 'unknown')
+                bbox = region.get('bbox', [])
+
+                region_info = {
+                    "type": region_type,
+                    "bbox": bbox,
+                    "confidence": region.get('score', 0.0)
+                }
+
+                # Add OCR text for text regions
+                if region_type in ['text', 'title', 'figure']:
+                    ocr_result = region.get('res', None)
+                    if ocr_result:
+                        if isinstance(ocr_result, tuple) and len(ocr_result) == 2:
+                            # Format: (boxes, texts)
+                            texts = [text[0] if isinstance(text, tuple) else text for text in ocr_result[1]]
+                            region_text = ' '.join(texts)
+                        else:
+                            region_text = str(ocr_result)
+
+                        region_info['text'] = region_text
+                        full_document_text.append(region_text)
+
+                # Add table HTML for table regions
+                elif region_type == 'table':
+                    table_html = region.get('res', {}).get('html', '')
+                    region_info['table_html'] = table_html
+
+                    # Extract table text
+                    table_text = region.get('res', {}).get('text', '')
+                    if table_text:
+                        region_info['text'] = table_text
+                        full_document_text.append(f"[Table]\n{table_text}")
+
+                page_data["regions"].append(region_info)
+
+            all_pages_results.append(page_data)
+
+        return {
+            "success": True,
+            "filename": file.filename,
+            "pages": len(images),
+            "document_structure": all_pages_results,
+            "full_text": "\n\n".join(full_document_text)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Structure analysis failed: {str(e)}"
         )
 
 
