@@ -121,12 +121,15 @@ Perfect for:
 - Multi-column documents
 - Forms and invoices
 - Research papers
+- Multilingual documents
 
 **Headers:**
 - `X-API-Key`: Your API key
 
-**Body:**
+**Parameters:**
 - `file`: PDF or image file (multipart/form-data)
+- `lang` (optional): Language code (e.g., 'en', 'ru', 'ch'). If not specified, uses first configured language.
+- `multilingual` (optional): Boolean flag to process with multiple languages (default: false)
 
 **Response:**
 ```json
@@ -134,35 +137,43 @@ Perfect for:
   "success": true,
   "filename": "document.pdf",
   "pages": 2,
+  "language": "en",
+  "multilingual": false,
   "document_structure": [
     {
       "page": 1,
+      "markdown": "# Document Title\n\nParagraph content...\n\n| Header 1 | Header 2 |\n|----------|----------|\n| Cell 1   | Cell 2   |",
+      "images": ["imgs/img_in_image_box_123_456_789_012.jpg"],
       "regions": [
         {
           "type": "title",
           "bbox": [x1, y1, x2, y2],
-          "confidence": 0.95,
           "text": "Document Title"
         },
         {
           "type": "table",
           "bbox": [x1, y1, x2, y2],
-          "confidence": 0.92,
           "table_html": "<table>...</table>",
           "text": "Table content as text"
         },
         {
           "type": "text",
           "bbox": [x1, y1, x2, y2],
-          "confidence": 0.88,
           "text": "Paragraph content"
         }
       ]
     }
   ],
-  "full_text": "Document Title\n\n[Table]\nTable content...\n\nParagraph content"
+  "full_text": "Document Title\n\nTable content...\n\nParagraph content"
 }
 ```
+
+**Key Features:**
+- **Markdown Output:** Primary output format with properly formatted text, tables, and images
+- **Layout Regions:** Structured metadata about document regions (titles, text, tables, figures, etc.)
+- **Table Recognition:** Tables extracted as HTML with proper structure
+- **Multilingual Support:** Process documents in multiple languages
+- **Image Extraction:** List of extracted images from the document
 
 **Region Types:**
 - `title` - Document/section titles
@@ -171,6 +182,22 @@ Perfect for:
 - `table` - Tables (includes HTML structure)
 - `list` - Lists
 - And more...
+
+**Multilingual Structure Analysis:**
+
+For multilingual documents, use the `multilingual=true` parameter:
+
+```bash
+# Process with specific languages
+curl -X POST "http://localhost:8023/structure?lang=en,ru&multilingual=true" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@document.pdf"
+
+# Process with all configured languages
+curl -X POST "http://localhost:8023/structure?multilingual=true" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@document.pdf"
+```
 
 ### OCR with Full Details
 ```bash
@@ -226,8 +253,18 @@ Returns only the extracted text without bounding boxes.
 ### Using cURL
 
 ```bash
-# Document structure analysis (recommended for PDFs)
+# Document structure analysis (recommended for PDFs with tables)
 curl -X POST "http://localhost:8023/structure" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@document.pdf"
+
+# Document structure analysis with specific language
+curl -X POST "http://localhost:8023/structure?lang=ru" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@document.pdf"
+
+# Document structure analysis with multilingual support
+curl -X POST "http://localhost:8023/structure?lang=en,ru&multilingual=true" \
   -H "X-API-Key: your-api-key-here" \
   -F "file=@document.pdf"
 
@@ -247,11 +284,32 @@ curl -X POST "http://localhost:8023/ocr/text-only" \
 ```python
 import requests
 
-url = "http://localhost:8023/ocr"
+# Document structure analysis
+url = "http://localhost:8023/structure"
 headers = {"X-API-Key": "your-api-key-here"}
+files = {"file": open("document.pdf", "rb")}
+
+response = requests.post(url, headers=headers, files=files)
+result = response.json()
+
+# Access markdown output
+for page in result['document_structure']:
+    print(f"Page {page['page']}:")
+    print(page['markdown'])
+
+# OCR with full details
+url = "http://localhost:8023/ocr"
 files = {"file": open("image.jpg", "rb")}
 
 response = requests.post(url, headers=headers, files=files)
+print(response.json())
+
+# Multilingual structure analysis
+url = "http://localhost:8023/structure"
+params = {"lang": "en,ru", "multilingual": "true"}
+files = {"file": open("document.pdf", "rb")}
+
+response = requests.post(url, headers=headers, files=files, params=params)
 print(response.json())
 ```
 

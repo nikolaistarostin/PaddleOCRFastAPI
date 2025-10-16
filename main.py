@@ -35,32 +35,43 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 # Initialize PaddleOCR instances (one per language)
 ocr_instances = {}
 
-# Initialize PP-StructureV3 instance (lazy loaded)
-structure_instance = None
+# Initialize PP-StructureV3 instances (lazy loaded, one per language)
+structure_instances = {}
 
 
-def get_structure():
+def get_structure(lang: str = None):
     """
-    Lazy initialization of PPStructureV3 for document analysis
+    Lazy initialization of PPStructureV3 for document analysis with language support
+
+    Args:
+        lang: Language code (if None, uses first language from OCR_LANGUAGES)
 
     Returns:
-        PPStructureV3 instance for document layout and table recognition
+        PPStructureV3 instance for the specified language
     """
-    global structure_instance
-    if structure_instance is None:
+    global structure_instances
+
+    # Use first language if none specified
+    if lang is None:
+        lang = LANGUAGES_LIST[0]
+
+    # Create structure instance if it doesn't exist for this language
+    if lang not in structure_instances:
         try:
-            # PPStructureV3 as shown in official docs
-            structure_instance = PPStructureV3(
+            # PPStructureV3 with language support
+            structure_instances[lang] = PPStructureV3(
                 use_doc_orientation_classify=False,
-                use_doc_unwarping=False
+                use_doc_unwarping=False,
+                lang=lang
             )
         except Exception as e:
             # Handle initialization errors properly
             raise HTTPException(
                 status_code=500,
-                detail=f"PPStructureV3 initialization failed: {str(e)}. Models may be downloading or missing dependencies."
+                detail=f"PPStructureV3 initialization failed for language '{lang}': {str(e)}. Models may be downloading or missing dependencies."
             )
-    return structure_instance
+
+    return structure_instances[lang]
 
 
 def get_ocr(lang: str = None):
@@ -474,6 +485,8 @@ async def perform_ocr_text_only(
 @app.post("/structure")
 async def perform_structure_analysis(
     file: UploadFile = File(...),
+    lang: str = None,
+    multilingual: bool = False,
     api_key: str = Depends(verify_api_key)
 ):
     """
@@ -484,26 +497,44 @@ async def perform_structure_analysis(
     - Table recognition with cell structure
     - Formula recognition
     - Proper reading order for complex layouts
+    - Markdown output with structured content
 
     Args:
         file: PDF file or image file
+        lang: Optional language code (e.g., 'en', 'fr', 'ch'). If not specified, uses first configured language.
+              For multilingual mode, use comma-separated languages (e.g., 'en,ru').
+        multilingual: If True, processes document with multiple configured languages and merges results.
 
     Returns:
         JSON response with structured document analysis including:
-        - Layout regions with types and bounding boxes
+        - Markdown text with proper formatting
+        - Layout regions with types and bounding boxes (if available)
         - Extracted tables in structured format
         - OCR text for each region
         - Full document text in reading order
     """
     try:
+        # Parse languages for processing
+        if multilingual:
+            # Use all configured languages if multilingual=True and no lang specified
+            process_langs = LANGUAGES_LIST if not lang else [l.strip() for l in lang.split(',')]
+        else:
+            # Single language mode
+            process_langs = [lang] if lang else [LANGUAGES_LIST[0]]
+
+        # Validate languages
+        for l in process_langs:
+            if l not in LANGUAGES_LIST:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Language '{l}' not configured. Available languages: {', '.join(LANGUAGES_LIST)}"
+                )
+
         # Read file
         contents = await file.read()
 
         # Process file to images
         images = process_file_to_images(contents, file.filename)
-
-        # Get PP-StructureV3 engine
-        structure_engine = get_structure()
 
         all_pages_results = []
         full_document_text = []
@@ -516,66 +547,96 @@ async def perform_structure_analysis(
 
             page_data = {
                 "page": page_num,
+                "markdown": "",
                 "regions": []
             }
 
             try:
-                # Perform structure analysis using PPStructureV3.predict()
-                output = structure_engine.predict(input=tmp_path)
+                # In multilingual mode, process with all languages and merge
+                if multilingual:
+                    # Collect results from all languages
+                    all_lang_results = []
+                    
+                    for current_lang in process_langs:
+                        structure_engine = get_structure(current_lang)
+                        output = structure_engine.predict(input=tmp_path)
 
-                # Extract result from output - output is a list of result objects
-                if not output or len(output) == 0:
-                    all_pages_results.append(page_data)
-                    continue
+                        if output and len(output) > 0:
+                            all_lang_results.append({
+                                'lang': current_lang,
+                                'result': output[0]
+                            })
 
-                result = output[0]  # Get first result object
+                    # For multilingual, combine markdown texts from all languages
+                    # (in practice, you might want to choose the best one or merge intelligently)
+                    for lang_result in all_lang_results:
+                        result = lang_result['result']
+                        current_lang = lang_result['lang']
 
-                # DEBUG: Print what's available in the result object
-                print(f"DEBUG: Result object type: {type(result)}")
-                print(f"DEBUG: Result attributes: {dir(result)}")
+                        # Extract markdown
+                        if hasattr(result, 'markdown'):
+                            md_info = result.markdown
+                            if isinstance(md_info, dict):
+                                markdown_text = md_info.get('markdown_texts', '')
+                                if markdown_text:
+                                    # Add language marker if multiple languages
+                                    if len(process_langs) > 1:
+                                        page_data["markdown"] += f"\n\n<!-- Language: {current_lang} -->\n\n{markdown_text}"
+                                    else:
+                                        page_data["markdown"] += markdown_text
+                                    
+                                    full_document_text.append(markdown_text)
 
-                # Check for markdown
-                if hasattr(result, 'markdown'):
-                    md_info = result.markdown
-                    print(f"DEBUG: markdown type: {type(md_info)}")
-                    print(f"DEBUG: markdown content: {md_info}")
-                    markdown_text = md_info.get('markdown', '') if isinstance(md_info, dict) else str(md_info)
-                    print(f"DEBUG: markdown_text length: {len(markdown_text)}")
                 else:
-                    markdown_text = ''
-                    print("DEBUG: No markdown attribute found")
+                    # Single language mode
+                    structure_engine = get_structure(process_langs[0])
+                    output = structure_engine.predict(input=tmp_path)
 
-                # Also get layout parsing result for structured data
-                if hasattr(result, 'layout_parsing_result'):
-                    layout_result = result.layout_parsing_result
-                    print(f"DEBUG: layout_parsing_result type: {type(layout_result)}")
-                    print(f"DEBUG: layout_parsing_result length: {len(layout_result) if hasattr(layout_result, '__len__') else 'N/A'}")
+                    # Extract result from output
+                    if not output or len(output) == 0:
+                        all_pages_results.append(page_data)
+                        continue
 
-                    for region in layout_result:
-                        region_type = region.get('layout_label', 'unknown')
-                        bbox = region.get('bbox', [])
+                    result = output[0]
 
-                        region_info = {
-                            "type": region_type,
-                            "bbox": bbox
-                        }
+                    # Extract markdown - this is the main output format
+                    if hasattr(result, 'markdown'):
+                        md_info = result.markdown
+                        if isinstance(md_info, dict):
+                            markdown_text = md_info.get('markdown_texts', '')
+                            markdown_images = md_info.get('markdown_images', {})
+                            
+                            page_data["markdown"] = markdown_text
+                            
+                            # Store image info if present
+                            if markdown_images:
+                                page_data["images"] = list(markdown_images.keys())
+                            
+                            full_document_text.append(markdown_text)
 
-                        # Extract text content
-                        if 'text' in region:
-                            text_content = region['text']
-                            region_info['text'] = text_content
-                            full_document_text.append(text_content)
+                    # Also extract layout parsing result if available (for additional metadata)
+                    if hasattr(result, 'layout_parsing_result'):
+                        layout_result = result.layout_parsing_result
+                        
+                        if layout_result:
+                            for region in layout_result:
+                                region_type = region.get('layout_label', 'unknown')
+                                bbox = region.get('bbox', [])
 
-                        # Extract table HTML if available
-                        if 'html' in region:
-                            region_info['table_html'] = region['html']
+                                region_info = {
+                                    "type": region_type,
+                                    "bbox": bbox
+                                }
 
-                        page_data["regions"].append(region_info)
+                                # Extract text content
+                                if 'text' in region:
+                                    region_info['text'] = region['text']
 
-                # If we got markdown but no regions, just use the markdown text
-                if not page_data["regions"] and markdown_text:
-                    page_data["markdown"] = markdown_text
-                    full_document_text.append(markdown_text)
+                                # Extract table HTML if available
+                                if 'html' in region:
+                                    region_info['table_html'] = region['html']
+
+                                page_data["regions"].append(region_info)
 
             finally:
                 # Clean up temp image file
@@ -588,6 +649,8 @@ async def perform_structure_analysis(
             "success": True,
             "filename": file.filename,
             "pages": len(images),
+            "language": ','.join(process_langs),
+            "multilingual": multilingual,
             "document_structure": all_pages_results,
             "full_text": "\n\n".join(full_document_text)
         }
