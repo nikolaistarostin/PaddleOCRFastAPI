@@ -73,6 +73,46 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
     return api_key
 
 
+def calculate_iou(bbox1, bbox2):
+    """
+    Calculate Intersection over Union (IoU) for two bounding boxes
+
+    Args:
+        bbox1, bbox2: Bounding boxes as [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+
+    Returns:
+        IoU score (0-1)
+    """
+    # Convert to [x_min, y_min, x_max, y_max]
+    x1_min = min(p[0] for p in bbox1)
+    y1_min = min(p[1] for p in bbox1)
+    x1_max = max(p[0] for p in bbox1)
+    y1_max = max(p[1] for p in bbox1)
+
+    x2_min = min(p[0] for p in bbox2)
+    y2_min = min(p[1] for p in bbox2)
+    x2_max = max(p[0] for p in bbox2)
+    y2_max = max(p[1] for p in bbox2)
+
+    # Calculate intersection
+    x_inter_min = max(x1_min, x2_min)
+    y_inter_min = max(y1_min, y2_min)
+    x_inter_max = min(x1_max, x2_max)
+    y_inter_max = min(y1_max, y2_max)
+
+    if x_inter_max < x_inter_min or y_inter_max < y_inter_min:
+        return 0.0
+
+    intersection_area = (x_inter_max - x_inter_min) * (y_inter_max - y_inter_min)
+
+    # Calculate union
+    bbox1_area = (x1_max - x1_min) * (y1_max - y1_min)
+    bbox2_area = (x2_max - x2_min) * (y2_max - y2_min)
+    union_area = bbox1_area + bbox2_area - intersection_area
+
+    return intersection_area / union_area if union_area > 0 else 0.0
+
+
 def process_file_to_images(contents: bytes, filename: str) -> List[Image.Image]:
     """
     Convert file (image or PDF) to list of PIL Images
@@ -189,8 +229,9 @@ async def perform_ocr(
 
             # In multilingual mode, merge results from all languages
             if multilingual:
-                page_results = {}  # Store results by bbox for deduplication
+                page_results = []  # Store all results with language info
 
+                # Collect results from all languages
                 for current_lang in process_langs:
                     ocr_engine = get_ocr(current_lang)
                     result = ocr_engine.ocr(img_bytes, cls=True)
@@ -203,21 +244,42 @@ async def perform_ocr(
                             bbox = line[0]
                             text_info = line[1]
 
-                            # Use bbox as key for deduplication (convert to tuple for hashing)
-                            bbox_key = tuple(tuple(point) for point in bbox)
+                            page_results.append({
+                                'text': text_info[0],
+                                'confidence': float(text_info[1]),
+                                'bounding_box': bbox,
+                                'page': page_num,
+                                'detected_lang': current_lang
+                            })
 
-                            # Keep result with highest confidence
-                            if bbox_key not in page_results or text_info[1] > page_results[bbox_key]['confidence']:
-                                page_results[bbox_key] = {
-                                    'text': text_info[0],
-                                    'confidence': float(text_info[1]),
-                                    'bounding_box': bbox,
-                                    'page': page_num,
-                                    'detected_lang': current_lang
-                                }
+                # Merge overlapping results (keep highest confidence)
+                merged_results = []
+                used_indices = set()
+
+                for i, result1 in enumerate(page_results):
+                    if i in used_indices:
+                        continue
+
+                    # Find all overlapping results for this bbox
+                    overlapping = [result1]
+                    used_indices.add(i)
+
+                    for j, result2 in enumerate(page_results):
+                        if j <= i or j in used_indices:
+                            continue
+
+                        # Check if bboxes overlap significantly (IoU > 0.5)
+                        iou = calculate_iou(result1['bounding_box'], result2['bounding_box'])
+                        if iou > 0.5:
+                            overlapping.append(result2)
+                            used_indices.add(j)
+
+                    # Keep the result with highest confidence
+                    best_result = max(overlapping, key=lambda x: x['confidence'])
+                    merged_results.append(best_result)
 
                 # Add merged results
-                for result_data in page_results.values():
+                for result_data in merged_results:
                     all_text_blocks.append(result_data)
                     all_text_parts.append(result_data['text'])
             else:
@@ -308,7 +370,7 @@ async def perform_ocr_text_only(
 
             if multilingual:
                 # Collect results from all languages
-                page_results = {}
+                page_results = []
 
                 for current_lang in process_langs:
                     ocr_engine = get_ocr(current_lang)
@@ -322,17 +384,37 @@ async def perform_ocr_text_only(
                             bbox = line[0]
                             text_info = line[1]
 
-                            bbox_key = tuple(tuple(point) for point in bbox)
+                            page_results.append({
+                                'text': text_info[0],
+                                'confidence': float(text_info[1]),
+                                'bounding_box': bbox
+                            })
 
-                            # Keep result with highest confidence
-                            if bbox_key not in page_results or text_info[1] > page_results[bbox_key]['confidence']:
-                                page_results[bbox_key] = {
-                                    'text': text_info[0],
-                                    'confidence': text_info[1]
-                                }
+                # Merge overlapping results (keep highest confidence)
+                merged_results = []
+                used_indices = set()
+
+                for i, result1 in enumerate(page_results):
+                    if i in used_indices:
+                        continue
+
+                    overlapping = [result1]
+                    used_indices.add(i)
+
+                    for j, result2 in enumerate(page_results):
+                        if j <= i or j in used_indices:
+                            continue
+
+                        iou = calculate_iou(result1['bounding_box'], result2['bounding_box'])
+                        if iou > 0.5:
+                            overlapping.append(result2)
+                            used_indices.add(j)
+
+                    best_result = max(overlapping, key=lambda x: x['confidence'])
+                    merged_results.append(best_result)
 
                 # Add merged text
-                for result_data in page_results.values():
+                for result_data in merged_results:
                     text_parts.append(result_data['text'])
             else:
                 # Single language mode
