@@ -4,7 +4,12 @@ import re
 from typing import List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader
-from paddleocr import PaddleOCR, PPStructure
+from paddleocr import PaddleOCR
+try:
+    from paddleocr import PPStructureV3
+except ImportError:
+    # Fallback for older versions
+    from paddleocr import PPStructure as PPStructureV3
 from PIL import Image
 import io
 from dotenv import load_dotenv
@@ -44,26 +49,26 @@ def get_structure():
     Lazy initialization of PP-StructureV3 for document analysis
 
     Returns:
-        PPStructure instance for document layout and table recognition
+        PPStructureV3 instance for document layout and table recognition
     """
     global structure_instance
     if structure_instance is None:
         try:
-            structure_instance = PPStructure(
-                use_angle_cls=False,  # Disable angle classifier to reduce model requirements
-                lang=LANGUAGES_LIST[0],  # Use first configured language
-                layout=True,  # Enable layout analysis
-                table=True,   # Enable table recognition
-                ocr=True,     # Enable OCR
-                show_log=True,  # Enable logging to see what's happening
-                recovery=False,  # Disable recovery model
-                use_pdf2docx_api=False  # Don't use PDF API
+            # Use the new PPStructureV3 API from PaddleOCR 2.8+
+            structure_instance = PPStructureV3(
+                device="cpu",  # Use CPU (change to "gpu" if GPU available)
+                enable_mkldnn=True,  # Enable MKL-DNN acceleration
+                cpu_threads=4,  # Number of CPU threads
+                use_table_recognition=True,  # Enable table recognition
+                use_seal_recognition=False,  # Disable seal recognition to reduce model requirements
+                use_formula_recognition=False,  # Disable formula recognition
+                use_chart_recognition=False,  # Disable chart recognition
             )
-        except SystemExit:
-            # Handle model download exit
+        except Exception as e:
+            # Handle initialization errors properly
             raise HTTPException(
                 status_code=500,
-                detail="PPStructure initialization failed. Models may be downloading. Please try again in a moment."
+                detail=f"PPStructureV3 initialization failed: {str(e)}. Models may be downloading or missing dependencies."
             )
     return structure_instance
 
@@ -514,12 +519,12 @@ async def perform_structure_analysis(
         full_document_text = []
 
         for page_num, image in enumerate(images, start=1):
-            # Convert PIL Image to numpy array for PP-Structure
+            # Convert PIL Image to numpy array for PP-StructureV3
             import numpy as np
             img_array = np.array(image)
 
-            # Perform structure analysis
-            result = structure_engine(img_array)
+            # Perform structure analysis using PPStructureV3.predict()
+            result = structure_engine.predict(input=img_array)
 
             page_data = {
                 "page": page_num,
