@@ -4,12 +4,7 @@ import re
 from typing import List, Dict, Any
 from fastapi import FastAPI, File, UploadFile, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader
-from paddleocr import PaddleOCR
-try:
-    from paddleocr import PPStructureV3
-except ImportError:
-    # Fallback for older versions
-    from paddleocr import PPStructure as PPStructureV3
+from paddleocr import PaddleOCR, PPStructureV3
 from PIL import Image
 import io
 from dotenv import load_dotenv
@@ -46,7 +41,7 @@ structure_instance = None
 
 def get_structure():
     """
-    Lazy initialization of PP-StructureV3 for document analysis
+    Lazy initialization of PPStructureV3 for document analysis
 
     Returns:
         PPStructureV3 instance for document layout and table recognition
@@ -54,15 +49,10 @@ def get_structure():
     global structure_instance
     if structure_instance is None:
         try:
-            # Use the new PPStructureV3 API from PaddleOCR 2.8+
+            # PPStructureV3 as shown in official docs
             structure_instance = PPStructureV3(
-                device="cpu",  # Use CPU (change to "gpu" if GPU available)
-                enable_mkldnn=True,  # Enable MKL-DNN acceleration
-                cpu_threads=4,  # Number of CPU threads
-                use_table_recognition=True,  # Enable table recognition
-                use_seal_recognition=False,  # Disable seal recognition to reduce model requirements
-                use_formula_recognition=False,  # Disable formula recognition
-                use_chart_recognition=False,  # Disable chart recognition
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False
             )
         except Exception as e:
             # Handle initialization errors properly
@@ -519,20 +509,45 @@ async def perform_structure_analysis(
         full_document_text = []
 
         for page_num, image in enumerate(images, start=1):
-            # Convert PIL Image to numpy array for PP-StructureV3
-            import numpy as np
-            img_array = np.array(image)
+            # Save image temporarily for PPStructureV3 (it expects file path or URL)
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                image.save(tmp_file.name, format='PNG')
+                tmp_path = tmp_file.name
 
-            # Perform structure analysis using PPStructureV3.predict()
-            result = structure_engine.predict(input=img_array)
+            try:
+                # Perform structure analysis using PPStructureV3.predict()
+                output = structure_engine.predict(input=tmp_path)
+
+                # Extract result from output
+                if output and len(output) > 0:
+                    result = output[0]  # Get first result
+                else:
+                    result = None
+            finally:
+                # Clean up temp file
+                import os as os_module
+                if os_module.path.exists(tmp_path):
+                    os_module.unlink(tmp_path)
 
             page_data = {
                 "page": page_num,
                 "regions": []
             }
 
-            # Process results
-            for region in result:
+            # Skip if no result
+            if result is None:
+                all_pages_results.append(page_data)
+                continue
+
+            # PPStructureV3 returns result object with attributes
+            # Get layout parsing result
+            layout_result = getattr(result, 'layout_parsing_result', None)
+            if layout_result is None:
+                all_pages_results.append(page_data)
+                continue
+
+            # Process results - layout_result should be a list of regions
+            for region in layout_result:
                 region_type = region.get('type', 'unknown')
                 bbox = region.get('bbox', [])
 
