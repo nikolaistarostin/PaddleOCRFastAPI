@@ -209,11 +209,78 @@ fetch('http://localhost:8023/ocr', {
 ### Environment Variables
 
 - `API_KEY` (required): API key for authentication
+- `OCR_LANGUAGES` (optional): Comma-separated list of language codes. Default: `en`
+
+### Language Configuration
+
+PaddleOCR supports 80+ languages. You can configure multiple languages via the `OCR_LANGUAGES` environment variable.
+
+**Examples:**
+```bash
+# Single language (English)
+OCR_LANGUAGES=en
+
+# Multiple languages (English, French, German)
+OCR_LANGUAGES=en,fr,german
+
+# Chinese + English
+OCR_LANGUAGES=ch,en
+
+# Spanish, Portuguese, Italian
+OCR_LANGUAGES=es,pt,it
+```
+
+**Supported Languages:**
+- `en` - English
+- `ch` - Chinese (Simplified & Traditional)
+- `fr` - French
+- `german` - German
+- `japan` - Japanese
+- `korean` - Korean
+- `es` - Spanish
+- `pt` - Portuguese
+- `ru` - Russian
+- `ar` - Arabic
+- `hi` - Hindi
+- `it` - Italian
+- And 70+ more...
+
+Full list: [PaddleOCR Multilingual Documentation](https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.7/doc/doc_en/multi_languages_en.md)
+
+**Using Language Parameter:**
+
+You can specify which language to use per request:
+
+```bash
+# Use default language
+curl -X POST "http://localhost:8023/ocr" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@image.jpg"
+
+# Specify language
+curl -X POST "http://localhost:8023/ocr?lang=fr" \
+  -H "X-API-Key: your-api-key-here" \
+  -F "file=@image.jpg"
+```
+
+**Check Available Languages:**
+
+```bash
+curl http://localhost:8023/languages
+```
+
+Response:
+```json
+{
+  "configured_languages": ["en", "fr", "german"],
+  "default_language": "en"
+}
+```
 
 ### PaddleOCR Settings
 
 PaddleOCR is configured in [main.py](main.py) with the following default settings:
-- Language: English (`lang='en'`)
+- Languages: Configured via `OCR_LANGUAGES` environment variable
 - Angle classification: Enabled (`use_angle_cls=True`)
 - GPU: Disabled (`use_gpu=False`)
 
