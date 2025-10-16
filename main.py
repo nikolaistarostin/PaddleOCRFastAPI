@@ -48,14 +48,23 @@ def get_structure():
     """
     global structure_instance
     if structure_instance is None:
-        structure_instance = PPStructure(
-            use_angle_cls=True,
-            lang=LANGUAGES_LIST[0],  # Use first configured language
-            layout=True,  # Enable layout analysis
-            table=True,   # Enable table recognition
-            ocr=True,     # Enable OCR
-            show_log=False
-        )
+        try:
+            structure_instance = PPStructure(
+                use_angle_cls=False,  # Disable angle classifier to reduce model requirements
+                lang=LANGUAGES_LIST[0],  # Use first configured language
+                layout=True,  # Enable layout analysis
+                table=True,   # Enable table recognition
+                ocr=True,     # Enable OCR
+                show_log=True,  # Enable logging to see what's happening
+                recovery=False,  # Disable recovery model
+                use_pdf2docx_api=False  # Don't use PDF API
+            )
+        except SystemExit:
+            # Handle model download exit
+            raise HTTPException(
+                status_code=500,
+                detail="PPStructure initialization failed. Models may be downloading. Please try again in a moment."
+            )
     return structure_instance
 
 
