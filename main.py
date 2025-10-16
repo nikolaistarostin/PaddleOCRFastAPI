@@ -530,13 +530,26 @@ async def perform_structure_analysis(
 
                 result = output[0]  # Get first result object
 
-                # Get markdown representation (easiest way to get structured content)
-                md_info = result.markdown
-                markdown_text = md_info.get('markdown', '')
+                # DEBUG: Print what's available in the result object
+                print(f"DEBUG: Result object type: {type(result)}")
+                print(f"DEBUG: Result attributes: {dir(result)}")
+
+                # Check for markdown
+                if hasattr(result, 'markdown'):
+                    md_info = result.markdown
+                    print(f"DEBUG: markdown type: {type(md_info)}")
+                    print(f"DEBUG: markdown content: {md_info}")
+                    markdown_text = md_info.get('markdown', '') if isinstance(md_info, dict) else str(md_info)
+                    print(f"DEBUG: markdown_text length: {len(markdown_text)}")
+                else:
+                    markdown_text = ''
+                    print("DEBUG: No markdown attribute found")
 
                 # Also get layout parsing result for structured data
                 if hasattr(result, 'layout_parsing_result'):
                     layout_result = result.layout_parsing_result
+                    print(f"DEBUG: layout_parsing_result type: {type(layout_result)}")
+                    print(f"DEBUG: layout_parsing_result length: {len(layout_result) if hasattr(layout_result, '__len__') else 'N/A'}")
 
                     for region in layout_result:
                         region_type = region.get('layout_label', 'unknown')
