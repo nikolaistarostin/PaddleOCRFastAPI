@@ -1,10 +1,13 @@
 import os
+import tempfile
+from typing import List
 from fastapi import FastAPI, File, UploadFile, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader
 from paddleocr import PaddleOCR
 from PIL import Image
 import io
 from dotenv import load_dotenv
+from pdf2image import convert_from_bytes
 
 # Load environment variables
 load_dotenv()
@@ -50,6 +53,43 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
     return api_key
 
 
+def process_file_to_images(contents: bytes, filename: str) -> List[Image.Image]:
+    """
+    Convert file (image or PDF) to list of PIL Images
+
+    Args:
+        contents: File contents as bytes
+        filename: Original filename
+
+    Returns:
+        List of PIL Images
+    """
+    # Check if it's a PDF
+    if filename.lower().endswith('.pdf'):
+        try:
+            # Convert PDF pages to images
+            images = convert_from_bytes(contents)
+            return images
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to process PDF: {str(e)}"
+            )
+    else:
+        # Try to open as image
+        try:
+            image = Image.open(io.BytesIO(contents))
+            # Convert to RGB if necessary
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            return [image]
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File must be a valid image or PDF: {str(e)}"
+            )
+
+
 @app.get("/")
 async def root():
     """Health check endpoint"""
@@ -72,65 +112,57 @@ async def perform_ocr(
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Perform OCR on an uploaded image file
+    Perform OCR on an uploaded image or PDF file
 
     Args:
-        file: Image file (jpg, png, etc.)
+        file: Image file (jpg, png, etc.) or PDF
 
     Returns:
         JSON response with detected text and bounding boxes
     """
     try:
-        # Validate file type
-        if not file.content_type.startswith('image/'):
-            raise HTTPException(
-                status_code=400,
-                detail="File must be an image"
-            )
-
-        # Read image file
+        # Read file
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
 
-        # Convert to RGB if necessary
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        # Process file to images (handles both images and PDFs)
+        images = process_file_to_images(contents, file.filename)
 
-        # Perform OCR
+        # Perform OCR on all images/pages
         ocr_engine = get_ocr()
-        result = ocr_engine.ocr(contents, cls=True)
+        all_text_blocks = []
+        all_text_parts = []
 
-        # Format results
-        if result is None or len(result) == 0 or result[0] is None:
-            return {
-                "success": True,
-                "filename": file.filename,
-                "text_blocks": [],
-                "full_text": ""
-            }
+        for page_num, image in enumerate(images, start=1):
+            # Convert PIL Image to bytes for PaddleOCR
+            img_byte_arr = io.BytesIO()
+            image.save(img_byte_arr, format='PNG')
+            img_bytes = img_byte_arr.getvalue()
 
-        text_blocks = []
-        full_text_parts = []
+            result = ocr_engine.ocr(img_bytes, cls=True)
 
-        for line in result[0]:
-            if line is None:
-                continue
+            # Format results for this page
+            if result is not None and len(result) > 0 and result[0] is not None:
+                for line in result[0]:
+                    if line is None:
+                        continue
 
-            bbox = line[0]  # Bounding box coordinates
-            text_info = line[1]  # (text, confidence)
+                    bbox = line[0]  # Bounding box coordinates
+                    text_info = line[1]  # (text, confidence)
 
-            text_blocks.append({
-                "text": text_info[0],
-                "confidence": float(text_info[1]),
-                "bounding_box": bbox
-            })
-            full_text_parts.append(text_info[0])
+                    all_text_blocks.append({
+                        "text": text_info[0],
+                        "confidence": float(text_info[1]),
+                        "bounding_box": bbox,
+                        "page": page_num
+                    })
+                    all_text_parts.append(text_info[0])
 
         return {
             "success": True,
             "filename": file.filename,
-            "text_blocks": text_blocks,
-            "full_text": "\n".join(full_text_parts)
+            "pages": len(images),
+            "text_blocks": all_text_blocks,
+            "full_text": "\n".join(all_text_parts)
         }
 
     except Exception as e:
@@ -146,51 +178,44 @@ async def perform_ocr_text_only(
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Perform OCR on an uploaded image file and return only the extracted text
+    Perform OCR on an uploaded image or PDF file and return only the extracted text
 
     Args:
-        file: Image file (jpg, png, etc.)
+        file: Image file (jpg, png, etc.) or PDF
 
     Returns:
         JSON response with only the extracted text
     """
     try:
-        # Validate file type
-        if not file.content_type.startswith('image/'):
-            raise HTTPException(
-                status_code=400,
-                detail="File must be an image"
-            )
-
-        # Read image file
+        # Read file
         contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
 
-        # Convert to RGB if necessary
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        # Process file to images (handles both images and PDFs)
+        images = process_file_to_images(contents, file.filename)
 
-        # Perform OCR
+        # Perform OCR on all images/pages
         ocr_engine = get_ocr()
-        result = ocr_engine.ocr(contents, cls=True)
-
-        # Extract only text
-        if result is None or len(result) == 0 or result[0] is None:
-            return {
-                "success": True,
-                "filename": file.filename,
-                "text": ""
-            }
-
         text_parts = []
-        for line in result[0]:
-            if line is None:
-                continue
-            text_parts.append(line[1][0])
+
+        for image in images:
+            # Convert PIL Image to bytes for PaddleOCR
+            img_byte_arr = io.BytesIO()
+            image.save(img_byte_arr, format='PNG')
+            img_bytes = img_byte_arr.getvalue()
+
+            result = ocr_engine.ocr(img_bytes, cls=True)
+
+            # Extract text from this page
+            if result is not None and len(result) > 0 and result[0] is not None:
+                for line in result[0]:
+                    if line is None:
+                        continue
+                    text_parts.append(line[1][0])
 
         return {
             "success": True,
             "filename": file.filename,
+            "pages": len(images),
             "text": "\n".join(text_parts)
         }
 

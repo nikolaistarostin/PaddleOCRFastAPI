@@ -3,7 +3,7 @@ FROM python:3.10-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies required for PaddleOCR
+# Install system dependencies required for PaddleOCR and PDF processing
 RUN apt-get update && apt-get install -y \
     libgomp1 \
     libglib2.0-0 \
@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgl1 \
-    libglib2.0-0 \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
