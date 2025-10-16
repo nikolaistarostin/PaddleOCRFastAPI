@@ -514,75 +514,77 @@ async def perform_structure_analysis(
                 image.save(tmp_file.name, format='PNG')
                 tmp_path = tmp_file.name
 
-            try:
-                # Perform structure analysis using PPStructureV3.predict()
-                output = structure_engine.predict(input=tmp_path)
-
-                # Extract result from output
-                if output and len(output) > 0:
-                    result = output[0]  # Get first result
-                else:
-                    result = None
-            finally:
-                # Clean up temp file
-                import os as os_module
-                if os_module.path.exists(tmp_path):
-                    os_module.unlink(tmp_path)
-
             page_data = {
                 "page": page_num,
                 "regions": []
             }
 
-            # Skip if no result
-            if result is None:
-                all_pages_results.append(page_data)
-                continue
+            try:
+                # Perform structure analysis using PPStructureV3.predict()
+                output = structure_engine.predict(input=tmp_path)
 
-            # PPStructureV3 returns result object with attributes
-            # Get layout parsing result
-            layout_result = getattr(result, 'layout_parsing_result', None)
-            if layout_result is None:
-                all_pages_results.append(page_data)
-                continue
+                # Extract result from output - output is a list of result objects
+                if not output or len(output) == 0:
+                    all_pages_results.append(page_data)
+                    continue
 
-            # Process results - layout_result should be a list of regions
-            for region in layout_result:
-                region_type = region.get('type', 'unknown')
-                bbox = region.get('bbox', [])
+                result = output[0]  # Get first result object
 
-                region_info = {
-                    "type": region_type,
-                    "bbox": bbox,
-                    "confidence": region.get('score', 0.0)
-                }
+                # Get the JSON representation using save_to_json
+                import json
+                import glob
+                json_output_dir = tempfile.mkdtemp()
 
-                # Add OCR text for text regions
-                if region_type in ['text', 'title', 'figure']:
-                    ocr_result = region.get('res', None)
-                    if ocr_result:
-                        if isinstance(ocr_result, tuple) and len(ocr_result) == 2:
-                            # Format: (boxes, texts)
-                            texts = [text[0] if isinstance(text, tuple) else text for text in ocr_result[1]]
-                            region_text = ' '.join(texts)
-                        else:
-                            region_text = str(ocr_result)
+                result.save_to_json(save_path=json_output_dir)
 
-                        region_info['text'] = region_text
-                        full_document_text.append(region_text)
+                # Find the generated JSON file
+                json_files = glob.glob(os.path.join(json_output_dir, '*.json'))
 
-                # Add table HTML for table regions
-                elif region_type == 'table':
-                    table_html = region.get('res', {}).get('html', '')
-                    region_info['table_html'] = table_html
+                if json_files:
+                    with open(json_files[0], 'r', encoding='utf-8') as f:
+                        result_json = json.load(f)
 
-                    # Extract table text
-                    table_text = region.get('res', {}).get('text', '')
-                    if table_text:
-                        region_info['text'] = table_text
-                        full_document_text.append(f"[Table]\n{table_text}")
+                    # Extract regions from the JSON structure
+                    if 'layout_regions' in result_json:
+                        for region in result_json['layout_regions']:
+                            region_type = region.get('type', 'unknown')
+                            bbox = region.get('bbox', [])
 
-                page_data["regions"].append(region_info)
+                            region_info = {
+                                "type": region_type,
+                                "bbox": bbox,
+                                "confidence": region.get('score', 0.0)
+                            }
+
+                            # Add OCR text for text regions
+                            if region_type in ['text', 'title', 'figure']:
+                                ocr_text = region.get('text', '')
+                                if ocr_text:
+                                    region_info['text'] = ocr_text
+                                    full_document_text.append(ocr_text)
+
+                            # Add table HTML for table regions
+                            elif region_type == 'table':
+                                table_html = region.get('html', '')
+                                table_text = region.get('text', '')
+
+                                if table_html:
+                                    region_info['table_html'] = table_html
+                                if table_text:
+                                    region_info['text'] = table_text
+                                    full_document_text.append(f"[Table]\n{table_text}")
+
+                            page_data["regions"].append(region_info)
+
+                    # Clean up JSON files
+                    for json_file in json_files:
+                        os.unlink(json_file)
+                    os.rmdir(json_output_dir)
+
+            finally:
+                # Clean up temp image file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
 
             all_pages_results.append(page_data)
 
